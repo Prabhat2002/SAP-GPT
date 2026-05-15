@@ -141,54 +141,98 @@ def detect_platform_mismatch(selected_platform: str, question: str) -> str | Non
 # PLATFORM-AWARE PROMPT
 # =====================================================
 
-prompt = ChatPromptTemplate.from_template("""
+
+# =====================================================
+# CHATBOT PROMPT — Platform specific OR Other (any SAP)
+# =====================================================
+chatbot_prompt = ChatPromptTemplate.from_template("""
 You are SAP-GPT, an expert enterprise SAP assistant.
 
-IMPORTANT RULE — Platform Boundary:
-You MUST answer ONLY within the context of the selected platform below.
-If the question is about a different SAP module or platform, politely decline
-and tell the user to switch to the correct platform.
-
 Selected Platform: {platform}
+
+{platform_instruction}
 
 Question / Error:
 {error}
 
-If the question is within scope of {platform}, provide:
-1. Root Cause
+Provide a thorough answer with:
+1. Root Cause / Understanding
 2. SAP Technical Explanation
-3. Step-by-Step Fix
-4. Relevant SAP Transactions / Tcodes
-5. Relevant SAP Tables
+3. Step-by-Step Fix / Solution
+4. Relevant SAP Transactions / T-codes (if applicable)
+5. Relevant SAP Tables (if applicable)
 6. Best Practices
-7. Severity (LOW / MEDIUM / HIGH / CRITICAL)
+7. Severity: LOW / MEDIUM / HIGH / CRITICAL
 8. Prevention Tips
 9. Additional Notes
+""")
 
-If the question is NOT within the scope of {platform}:
-- Say: "⚠️ This question appears to be about [correct platform], not {platform}."
-- Tell the user to select the correct platform from the dropdown.
-- Do NOT answer the question.
+# =====================================================
+# DOCUMENT ANALYZER PROMPT
+# =====================================================
+doc_prompt = ChatPromptTemplate.from_template("""
+You are SAP-GPT, an expert SAP document analyst.
+
+Document Type Selected: {doc_type}
+
+First, determine if this document is SAP-related.
+SAP-related means: it involves SAP systems, modules, configurations, ABAP, BTP, HANA, Fiori, CPI, RAP, CAPM, Basis, Functional (MM/SD/FI/HR), or any SAP technology.
+
+Document Content:
+{content}
+
+RULES:
+- If the document is NOT SAP-related at all: respond ONLY with:
+  "❌ This document does not appear to be SAP-related. SAP-GPT can only analyze SAP documents. Please upload a document related to SAP systems, modules, or technologies."
+
+- If the document IS SAP-related (any SAP topic — ABAP, RAP, BTP, Fiori, HANA, Functional, Basis, CPI, CAPM, etc.):
+  Provide a full analysis:
+  1. Executive Summary
+  2. SAP Module / Technology Identified
+  3. Key Technical Points
+  4. Risks & Gaps Identified
+  5. Recommendations
+  6. Action Items
+  7. Overall Assessment
+
+Always answer based on document content — do NOT ask user to change dropdown.
 """)
 
 
 def analyze_error(platform: str, error_text: str, use_feedback: bool = True) -> str:
+    """Used by Tab 1 Chatbot."""
 
-    # Client-side pre-check for obvious mismatches
-    mismatch = detect_platform_mismatch(platform, error_text)
+    OTHER_PLATFORMS = ["Other / Not Sure", "SAP Document Analysis"]
 
-    if mismatch:
-        return (
-            f"## ⚠️ Platform Mismatch Detected\n\n"
-            f"Your question appears to be about **{mismatch}**, "
-            f"not **{platform}**.\n\n"
-            f"**Please switch the platform dropdown to: `{mismatch}`** and ask again.\n\n"
-            f"---\n"
-            f"_SAP-GPT enforces platform boundaries to give you accurate, "
-            f"context-specific answers._"
+    # For Other — answer any SAP question, no mismatch check
+    if platform in OTHER_PLATFORMS:
+        platform_instruction = (
+            "The user has selected 'Other / Not Sure'. "
+            "Answer ANY SAP-related question across ALL SAP domains: "
+            "ABAP, BTP, CAPM, Fiori/UI5, HANA, Basis, Functional (MM/SD/FI/HR), "
+            "CPI, S/4HANA, RAP, and any other SAP technology. "
+            "If the question is completely unrelated to SAP, politely say so."
+        )
+    else:
+        # Specific platform — check mismatch
+        mismatch = detect_platform_mismatch(platform, error_text)
+        if mismatch:
+            return (
+                f"## ⚠️ Platform Mismatch Detected\n\n"
+                f"Your question appears to be about **{mismatch}**, "
+                f"not **{platform}**.\n\n"
+                f"**Please switch the platform dropdown to: `{mismatch}`** and ask again.\n\n"
+                f"---\n"
+                f"_If you're not sure about the platform, select **Other / Not Sure** "
+                f"and SAP-GPT will answer across all SAP domains._"
+            )
+        platform_instruction = (
+            f"Answer ONLY within the context of {platform}. "
+            f"If the question is clearly about a different SAP platform, "
+            f"tell the user to switch platform or use 'Other / Not Sure'."
         )
 
-    # Build few-shot examples from user feedback (self-training)
+    # Few-shot from feedback
     few_shot_block = ""
     if use_feedback:
         try:
@@ -203,14 +247,25 @@ def analyze_error(platform: str, error_text: str, use_feedback: bool = True) -> 
             pass
 
     try:
-        chain = prompt | llm
-
+        chain = chatbot_prompt | llm
         response = chain.invoke({
             "platform": platform,
+            "platform_instruction": platform_instruction,
             "error": few_shot_block + error_text
         })
-
         return response.content
+    except Exception as e:
+        return f"❌ ERROR: {str(e)}"
 
+
+def analyze_document(doc_type: str, content: str) -> str:
+    """Used by Tab 2 Document Analyzer."""
+    try:
+        chain = doc_prompt | llm
+        response = chain.invoke({
+            "doc_type": doc_type,
+            "content": content[:10000]
+        })
+        return response.content
     except Exception as e:
         return f"❌ ERROR: {str(e)}"

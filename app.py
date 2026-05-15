@@ -9,7 +9,7 @@ from database import (
     delete_team, leave_team, save_feedback, count_pending_requests,
     get_username, fetch_user_feedback_stats
 )
-from backend import analyze_error
+from backend import analyze_error, analyze_document
 from report_generator import generate_report
 
 import io
@@ -483,6 +483,7 @@ else:
     with tabs[1]:
 
         st.markdown("## 📄 SAP Document Analyzer")
+        st.caption("Upload any SAP document — TSD, FSD, Defect, or any SAP-related file.")
 
         uploaded_doc = st.file_uploader(
             "📂 Upload Document (PDF, Word, TXT)",
@@ -490,7 +491,7 @@ else:
             key="doc_uploader"
         )
 
-        # Only 4 document types — independent from Tab 1
+        # 4 document types — independent from Tab 1
         doc_type = st.selectbox(
             "📋 Document Type",
             [
@@ -501,6 +502,9 @@ else:
             ],
             key="doc_type_select"
         )
+
+        if doc_type == "Other SAP Related Document":
+            st.info("ℹ️ **Other** — Upload any SAP document: ABAP, RAP, BTP, Fiori, HANA, CPI, Functional, Basis, etc. Non-SAP documents will be rejected.")
 
         if st.button("⚡ Analyze Document"):
             if not uploaded_doc:
@@ -524,32 +528,22 @@ else:
                         st.error(f"❌ Could not read document: {e}")
 
                 if extracted_text.strip():
-                    prompt = f"""You are an expert SAP consultant. Analyze this SAP document.
-
-Document Type: {doc_type}
-
-Content:
-{extracted_text[:10000]}
-
-Provide a thorough analysis with:
-1. Executive Summary
-2. Key Takeaways
-3. SAP-Specific Technical Notes
-4. Risks & Gaps Identified
-5. Recommendations
-6. Action Items
-"""
                     with st.spinner("🤖 Analyzing document..."):
-                        doc_response = analyze_error("SAP Document Analysis", prompt)
+                        doc_response = analyze_document(doc_type, extracted_text)
                     st.session_state.doc_analysis_result = (doc_type, uploaded_doc.name, doc_response)
+                    st.rerun()
                 else:
                     st.warning("⚠️ Could not extract text. Try a different file format.")
 
         if st.session_state.get("doc_analysis_result"):
             dtype, dname, dresult = st.session_state.doc_analysis_result
-            st.markdown("## 📊 Document Analysis")
-            st.caption(f"📄 **{dname}** — {dtype}")
-            st.markdown(dresult)
+            if "does not appear to be SAP-related" in dresult:
+                st.error(dresult)
+            else:
+                st.markdown("---")
+                st.markdown("## 📊 Document Analysis Result")
+                st.caption(f"📄 **{dname}** — {dtype}")
+                st.markdown(dresult)
 
     # =================================================
     # TAB 3 — JOIN TEAM
