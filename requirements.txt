@@ -1,4 +1,3 @@
-@"
 streamlit
 langchain-groq
 langchain-core
@@ -8,6 +7,4 @@ python-docx
 PyPDF2
 pandas
 plotly
-pytesseract
 Pillow
-"@ | Out-File -FilePath requirements.txt -Encoding utf8
