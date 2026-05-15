@@ -5,8 +5,19 @@ from langchain_core.prompts import ChatPromptTemplate
 
 load_dotenv()
 
+# Works locally (.env) AND on Streamlit Cloud (secrets.toml)
+def _get_groq_key():
+    key = os.getenv("GROQ_API_KEY", "")
+    if not key:
+        try:
+            import streamlit as st
+            key = st.secrets.get("GROQ_API_KEY", "")
+        except Exception:
+            pass
+    return key
+
 llm = ChatGroq(
-    groq_api_key=os.getenv("GROQ_API_KEY"),
+    groq_api_key=_get_groq_key(),
     model_name="llama-3.3-70b-versatile"
 )
 
