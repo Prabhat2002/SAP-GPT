@@ -59,6 +59,7 @@ defaults = {
     "auth_mode": "login",          # login | register | otp_verify | forgot
     "otp_email": "",               # email waiting for OTP
     "otp_purpose": "",             # "login" or "register"
+    "pending_password": "",        # temp store during register OTP verify
     "chat_history": [],
     "last_analysis": None, "followups": [], "feedback_given": False,
     "similar_matches": [], "reg_success": False,
@@ -86,22 +87,44 @@ if not st.session_state.logged_in:
 
     with col2:
 
-        # ---- OTP VERIFY SCREEN ----
+        # ---- OTP VERIFY SCREEN (used for both register & login OTP) ----
         if st.session_state.auth_mode == "otp_verify":
 
-            st.markdown(f"## 📧 Enter OTP")
-            st.info(f"OTP sent to **{st.session_state.otp_email}** (valid 10 min)")
+            purpose = st.session_state.get("otp_purpose", "login")
+            if purpose == "register":
+                st.markdown("## 📧 Verify Your Email")
+                st.info(f"OTP sent to **{st.session_state.otp_email}** — enter below to complete registration.")
+            else:
+                st.markdown("## 📧 Enter OTP")
+                st.info(f"OTP sent to **{st.session_state.otp_email}** (valid 10 min)")
 
             otp_input = st.text_input("🔢 Enter 6-digit OTP", max_chars=6, placeholder="123456")
 
-            if st.button("✅ Verify OTP"):
+            if st.button("✅ Verify & Continue"):
                 if verify_otp(st.session_state.otp_email, otp_input.strip()):
-                    user_id = login_user_otp(st.session_state.otp_email)
-                    st.session_state.logged_in = True
-                    st.session_state.user_id = user_id
-                    st.session_state.auth_mode = "login"
-                    st.success("✅ Login Successful!")
-                    st.rerun()
+                    if purpose == "register":
+                        # OTP verified → now actually save the user to DB
+                        ok = register_user_email(
+                            st.session_state.otp_email,
+                            st.session_state.get("pending_password", "")
+                        )
+                        if ok:
+                            st.session_state.auth_mode       = "login"
+                            st.session_state.reg_success     = True
+                            st.session_state.otp_email       = ""
+                            st.session_state.pending_password = ""
+                            st.rerun()
+                        else:
+                            st.error("❌ Email already registered. Please login.")
+                    else:
+                        # OTP login — user already registered (checked before sending OTP)
+                        from database import login_user_otp
+                        user_id = login_user_otp(st.session_state.otp_email)
+                        st.session_state.logged_in = True
+                        st.session_state.user_id   = user_id
+                        st.session_state.auth_mode = "login"
+                        st.success("✅ Login Successful!")
+                        st.rerun()
                 else:
                     st.error("❌ Invalid or expired OTP. Please try again.")
 
@@ -112,21 +135,20 @@ if not st.session_state.logged_in:
                 elif success:
                     st.success("✅ OTP resent!")
                 else:
-                    st.error(f"❌ {err}")
+                    st.error(f"❌ Could not send OTP: {err}")
 
             if st.button("⬅ Back"):
-                st.session_state.auth_mode = "login"
+                st.session_state.auth_mode = "register" if purpose == "register" else "login"
                 st.rerun()
 
         # ---- REGISTER SCREEN ----
         elif st.session_state.auth_mode == "register":
 
             st.markdown("## ✨ Create Account")
-            st.caption("No username needed — just your email.")
 
-            reg_email = st.text_input("📧 Email Address")
-            reg_pass  = st.text_input("🔒 Password", type="password")
-            reg_conf  = st.text_input("🔒 Confirm Password", type="password")
+            reg_email = st.text_input("📧 Email Address", key="reg_email")
+            reg_pass  = st.text_input("🔒 Password", type="password", key="reg_pass")
+            reg_conf  = st.text_input("🔒 Confirm Password", type="password", key="reg_conf")
 
             if reg_conf:
                 if reg_pass != reg_conf:
@@ -134,39 +156,27 @@ if not st.session_state.logged_in:
                 else:
                     st.success("✅ Passwords match")
 
-            col_otp, col_pwd = st.columns(2)
-
-            with col_otp:
-                if st.button("📧 Register with OTP"):
-                    if not reg_email.strip():
-                        st.error("❌ Please enter email")
-                    elif email_exists(reg_email.strip()):
-                        st.warning("⚠️ Email already registered. Please login.")
-                    else:
-                        _, success, err = send_otp_email(reg_email.strip())
-                        st.session_state.otp_email   = reg_email.strip()
-                        st.session_state.otp_purpose = "register"
-                        st.session_state.auth_mode   = "otp_verify"
-                        if err == "EMAIL_NOT_CONFIGURED":
-                            st.warning("⚠️ Email service not set up. Please configure SENDER_EMAIL in secrets.")
-                        elif success:
-                            st.success("✅ OTP sent!")
-                        st.rerun()
-
-            with col_pwd:
-                if st.button("🔒 Register with Password"):
-                    if not reg_email.strip() or not reg_pass:
-                        st.error("❌ Fill all fields")
-                    elif reg_pass != reg_conf:
-                        st.error("❌ Passwords don't match")
-                    else:
-                        ok = register_user_email(reg_email.strip(), reg_pass)
-                        if ok:
-                            st.session_state.auth_mode = "login"
-                            st.session_state.reg_success = True
-                            st.rerun()
-                        else:
-                            st.error("❌ Email already exists")
+            if st.button("📧 Register — Send OTP to Email"):
+                if not reg_email.strip():
+                    st.error("❌ Please enter your email")
+                elif not reg_pass:
+                    st.error("❌ Please enter a password")
+                elif reg_pass != reg_conf:
+                    st.error("❌ Passwords do not match")
+                elif email_exists(reg_email.strip()):
+                    st.error("❌ Email already registered. Please login.")
+                else:
+                    # Save password temporarily, send OTP for verification
+                    _, success, err = send_otp_email(reg_email.strip())
+                    st.session_state.otp_email        = reg_email.strip()
+                    st.session_state.otp_purpose      = "register"
+                    st.session_state.pending_password = reg_pass
+                    st.session_state.auth_mode        = "otp_verify"
+                    if err == "EMAIL_NOT_CONFIGURED":
+                        st.warning("⚠️ Email service not configured. Check Streamlit secrets.")
+                    elif success:
+                        st.success(f"✅ OTP sent to **{reg_email.strip()}**! Check your inbox.")
+                    st.rerun()
 
             st.markdown("---")
             if st.button("⬅ Back To Login"):
@@ -179,17 +189,37 @@ if not st.session_state.logged_in:
             st.markdown("## 🚀 Welcome Back")
 
             if st.session_state.get("reg_success"):
-                st.success("🎉 Account created! Please log in.")
+                st.success("🎉 Registration successful! Please log in.")
                 st.session_state.reg_success = False
 
-            login_email = st.text_input("📧 Email Address")
+            login_email = st.text_input("📧 Email Address", key="login_email")
 
-            login_tab = st.radio("Sign in with:", ["🔢 OTP (Recommended)", "🔒 Password"], horizontal=True)
+            login_tab = st.radio("Sign in with:", ["🔒 Password", "🔢 OTP"], horizontal=True)
 
-            if login_tab == "🔢 OTP (Recommended)":
+            if login_tab == "🔒 Password":
+                login_pass = st.text_input("🔒 Password", type="password", key="login_pass")
+                if st.button("🚀 Login"):
+                    if not login_email.strip() or not login_pass:
+                        st.error("❌ Please fill all fields")
+                    else:
+                        uid = login_user_email(login_email.strip(), login_pass)
+                        if uid:
+                            st.session_state.logged_in = True
+                            st.session_state.user_id   = uid
+                            st.success("✅ Login Successful")
+                            st.rerun()
+                        else:
+                            if email_exists(login_email.strip()):
+                                st.error("❌ Wrong password. Please try again.")
+                            else:
+                                st.error("❌ Email not registered. Please create an account first.")
+
+            else:  # OTP login
                 if st.button("📧 Send OTP"):
                     if not login_email.strip():
-                        st.error("❌ Enter your email")
+                        st.error("❌ Please enter your email")
+                    elif not email_exists(login_email.strip()):
+                        st.error("❌ Email not registered. Please create an account first.")
                     else:
                         _, success, err = send_otp_email(login_email.strip())
                         st.session_state.otp_email   = login_email.strip()
@@ -200,21 +230,6 @@ if not st.session_state.logged_in:
                         elif success:
                             st.success("✅ OTP sent to your email!")
                         st.rerun()
-
-            else:
-                login_pass = st.text_input("🔒 Password", type="password")
-                if st.button("🚀 Login"):
-                    if not login_email.strip() or not login_pass:
-                        st.error("❌ Fill all fields")
-                    else:
-                        uid = login_user_email(login_email.strip(), login_pass)
-                        if uid:
-                            st.session_state.logged_in = True
-                            st.session_state.user_id = uid
-                            st.success("✅ Login Successful")
-                            st.rerun()
-                        else:
-                            st.error("❌ Invalid email or password")
 
             st.markdown("---")
             st.markdown("### 🆕 New here?")

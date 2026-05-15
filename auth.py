@@ -2,13 +2,7 @@ import smtplib
 import random
 import os
 from email.mime.text import MIMEText
-from database import save_otp, verify_otp, register_user_email, login_user_email, login_user_otp
-
-# =====================================================
-# EMAIL CONFIG — Set in Streamlit Secrets or env vars
-# SENDER_EMAIL = your Gmail
-# SENDER_PASSWORD = Gmail App Password (16-char)
-# =====================================================
+from database import save_otp, verify_otp, email_exists
 
 def _get_smtp_creds():
     try:
@@ -25,14 +19,13 @@ def generate_otp():
 
 
 def send_otp_email(to_email):
-    """Send OTP email. Returns (otp, success, error_msg)."""
+    """Send OTP. Returns (otp, success, error_msg)."""
     otp = generate_otp()
     save_otp(to_email, otp)
 
     sender_email, sender_password = _get_smtp_creds()
 
     if not sender_email or not sender_password:
-        # Dev mode — return OTP directly (shown in UI)
         return otp, False, "EMAIL_NOT_CONFIGURED"
 
     try:
@@ -61,7 +54,7 @@ This code expires in 10 minutes.
         return otp, False, str(e)
 
 
-# Keep old functions for backward compat
+# Legacy compat
 def register_user(username, password):
     from database import get_connection
     conn = get_connection()
