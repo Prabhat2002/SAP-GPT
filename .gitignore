@@ -1,0 +1,8 @@
+@"
+.env
+__pycache__/
+*.pyc
+sapgpt.db
+*.db
+.streamlit/secrets.toml
+"@ | Out-File -FilePath .gitignore -Encoding utf8
