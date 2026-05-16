@@ -134,17 +134,40 @@ if not st.session_state.logged_in:
             reg_email = st.text_input("📧 Email Address", key="reg_email")
             reg_pass  = st.text_input("🔒 Password", type="password", key="reg_pass")
             reg_conf  = st.text_input("🔒 Confirm Password", type="password", key="reg_conf")
+            # Password strength checker
+            def validate_password(p):
+                import re
+                if len(p) < 8:
+                    return False, "❌ At least 8 characters required"
+                if not re.search(r'[A-Za-z]', p):
+                    return False, "❌ At least one letter required"
+                if not re.search(r'[0-9]', p):
+                    return False, "❌ At least one number required"
+                if not re.search(r'[!@#$%^&*(),.?\":{}|<>_\-]', p):
+                    return False, "❌ At least one special character required (!@#$% etc)"
+                return True, "✅ Strong password"
+
+            if reg_pass:
+                _valid, _msg = validate_password(reg_pass)
+                if _valid:
+                    st.success(_msg)
+                else:
+                    st.error(_msg)
+
             if reg_conf:
                 if reg_pass != reg_conf:
                     st.error("❌ Passwords do not match")
-                else:
+                elif reg_pass and validate_password(reg_pass)[0]:
                     st.success("✅ Passwords match")
 
             if st.button("📧 Register — Send OTP to Email"):
+                _valid, _msg = validate_password(reg_pass)
                 if not reg_email.strip():
                     st.error("❌ Please enter your email")
                 elif not reg_pass:
                     st.error("❌ Please enter a password")
+                elif not _valid:
+                    st.error(_msg)
                 elif reg_pass != reg_conf:
                     st.error("❌ Passwords do not match")
                 elif email_exists(reg_email.strip()):
