@@ -8,3 +8,4 @@ PyPDF2
 pandas
 plotly
 Pillow
+pytesseract
