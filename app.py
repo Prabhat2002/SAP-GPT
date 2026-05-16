@@ -18,21 +18,22 @@ import pandas as pd
 import plotly.express as px
 import PyPDF2
 
-from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib import colors
 from docx import Document
 
 try:
     import pytesseract
-    from PIL import Image
+    from PIL import Image, ImageEnhance
     if os.name == "nt":
         pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
     TESSERACT_AVAILABLE = True
 except Exception:
     TESSERACT_AVAILABLE = False
 
-# =====================================================
-# PAGE CONFIG
-# =====================================================
 st.set_page_config(page_title="SAP-GPT", page_icon="🤖", layout="wide")
 
 CSS = """
@@ -45,33 +46,26 @@ body { background: #020617; }
     color: white; border: none; border-radius: 12px;
     padding: 10px 20px; font-weight: 600;
 }
-.otp-box { background: #1e293b; border-radius: 12px; padding: 20px; margin: 10px 0; }
 """
 st.markdown(f"<style>{CSS}</style>", unsafe_allow_html=True)
 
 init_db()
 
-# =====================================================
-# SESSION STATE
-# =====================================================
 defaults = {
     "logged_in": False, "user_id": None,
-    "auth_mode": "login",          # login | register | otp_verify | forgot
-    "otp_email": "",               # email waiting for OTP
-    "otp_purpose": "",             # "login" or "register"
-    "pending_password": "",        # temp store during register OTP verify
+    "auth_mode": "login",
+    "otp_email": "",
+    "otp_purpose": "",
+    "pending_password": "",
     "chat_history": [],
     "last_analysis": None, "followups": [], "feedback_given": False,
     "similar_matches": [], "reg_success": False,
-    "doc_analysis_result": None,   # Tab2 independent result
+    "doc_analysis_result": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# =====================================================
-# HERO
-# =====================================================
 st.markdown("""
 <h1 class='main-title'>🤖 SAP-GPT</h1>
 <p class='subtitle'>Enterprise AI Assistant for SAP Developers</p>
@@ -79,17 +73,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =====================================================
-# AUTH SECTION
+# AUTH
 # =====================================================
 if not st.session_state.logged_in:
 
     col1, col2, col3 = st.columns([1, 2, 1])
-
     with col2:
 
-        # ---- OTP VERIFY SCREEN (used for both register & login OTP) ----
         if st.session_state.auth_mode == "otp_verify":
-
             purpose = st.session_state.get("otp_purpose", "login")
             if purpose == "register":
                 st.markdown("## 📧 Verify Your Email")
@@ -103,25 +94,22 @@ if not st.session_state.logged_in:
             if st.button("✅ Verify & Continue"):
                 if verify_otp(st.session_state.otp_email, otp_input.strip()):
                     if purpose == "register":
-                        # OTP verified → now actually save the user to DB
                         ok = register_user_email(
                             st.session_state.otp_email,
                             st.session_state.get("pending_password", "")
                         )
                         if ok:
-                            st.session_state.auth_mode       = "login"
-                            st.session_state.reg_success     = True
-                            st.session_state.otp_email       = ""
+                            st.session_state.auth_mode = "login"
+                            st.session_state.reg_success = True
+                            st.session_state.otp_email = ""
                             st.session_state.pending_password = ""
                             st.rerun()
                         else:
                             st.error("❌ Email already registered. Please login.")
                     else:
-                        # OTP login — user already registered (checked before sending OTP)
-                        from database import login_user_otp
                         user_id = login_user_otp(st.session_state.otp_email)
                         st.session_state.logged_in = True
-                        st.session_state.user_id   = user_id
+                        st.session_state.user_id = user_id
                         st.session_state.auth_mode = "login"
                         st.success("✅ Login Successful!")
                         st.rerun()
@@ -131,25 +119,21 @@ if not st.session_state.logged_in:
             if st.button("🔄 Resend OTP"):
                 _, success, err = send_otp_email(st.session_state.otp_email)
                 if err == "EMAIL_NOT_CONFIGURED":
-                    st.warning("⚠️ Email not configured. Check Streamlit secrets.")
+                    st.warning("⚠️ Email not configured.")
                 elif success:
                     st.success("✅ OTP resent!")
                 else:
-                    st.error(f"❌ Could not send OTP: {err}")
+                    st.error(f"❌ {err}")
 
             if st.button("⬅ Back"):
                 st.session_state.auth_mode = "register" if purpose == "register" else "login"
                 st.rerun()
 
-        # ---- REGISTER SCREEN ----
         elif st.session_state.auth_mode == "register":
-
             st.markdown("## ✨ Create Account")
-
             reg_email = st.text_input("📧 Email Address", key="reg_email")
             reg_pass  = st.text_input("🔒 Password", type="password", key="reg_pass")
             reg_conf  = st.text_input("🔒 Confirm Password", type="password", key="reg_conf")
-
             if reg_conf:
                 if reg_pass != reg_conf:
                     st.error("❌ Passwords do not match")
@@ -166,16 +150,15 @@ if not st.session_state.logged_in:
                 elif email_exists(reg_email.strip()):
                     st.error("❌ Email already registered. Please login.")
                 else:
-                    # Save password temporarily, send OTP for verification
                     _, success, err = send_otp_email(reg_email.strip())
-                    st.session_state.otp_email        = reg_email.strip()
-                    st.session_state.otp_purpose      = "register"
+                    st.session_state.otp_email = reg_email.strip()
+                    st.session_state.otp_purpose = "register"
                     st.session_state.pending_password = reg_pass
-                    st.session_state.auth_mode        = "otp_verify"
+                    st.session_state.auth_mode = "otp_verify"
                     if err == "EMAIL_NOT_CONFIGURED":
-                        st.warning("⚠️ Email service not configured. Check Streamlit secrets.")
+                        st.warning("⚠️ Email service not configured.")
                     elif success:
-                        st.success(f"✅ OTP sent to **{reg_email.strip()}**! Check your inbox.")
+                        st.success(f"✅ OTP sent to **{reg_email.strip()}**!")
                     st.rerun()
 
             st.markdown("---")
@@ -183,17 +166,13 @@ if not st.session_state.logged_in:
                 st.session_state.auth_mode = "login"
                 st.rerun()
 
-        # ---- LOGIN SCREEN ----
         else:
-
             st.markdown("## 🚀 Welcome Back")
-
             if st.session_state.get("reg_success"):
                 st.success("🎉 Registration successful! Please log in.")
                 st.session_state.reg_success = False
 
             login_email = st.text_input("📧 Email Address", key="login_email")
-
             login_tab = st.radio("Sign in with:", ["🔒 Password", "🔢 OTP"], horizontal=True)
 
             if login_tab == "🔒 Password":
@@ -205,16 +184,15 @@ if not st.session_state.logged_in:
                         uid = login_user_email(login_email.strip(), login_pass)
                         if uid:
                             st.session_state.logged_in = True
-                            st.session_state.user_id   = uid
+                            st.session_state.user_id = uid
                             st.success("✅ Login Successful")
                             st.rerun()
                         else:
                             if email_exists(login_email.strip()):
-                                st.error("❌ Wrong password. Please try again.")
+                                st.error("❌ Wrong password.")
                             else:
                                 st.error("❌ Email not registered. Please create an account first.")
-
-            else:  # OTP login
+            else:
                 if st.button("📧 Send OTP"):
                     if not login_email.strip():
                         st.error("❌ Please enter your email")
@@ -222,13 +200,13 @@ if not st.session_state.logged_in:
                         st.error("❌ Email not registered. Please create an account first.")
                     else:
                         _, success, err = send_otp_email(login_email.strip())
-                        st.session_state.otp_email   = login_email.strip()
+                        st.session_state.otp_email = login_email.strip()
                         st.session_state.otp_purpose = "login"
-                        st.session_state.auth_mode   = "otp_verify"
+                        st.session_state.auth_mode = "otp_verify"
                         if err == "EMAIL_NOT_CONFIGURED":
-                            st.warning("⚠️ Email not configured in Streamlit secrets.")
+                            st.warning("⚠️ Email not configured.")
                         elif success:
-                            st.success("✅ OTP sent to your email!")
+                            st.success("✅ OTP sent!")
                         st.rerun()
 
             st.markdown("---")
@@ -241,7 +219,6 @@ if not st.session_state.logged_in:
 # MAIN APP
 # =====================================================
 else:
-
     _username = get_username(st.session_state.user_id)
     _history  = fetch_user_history(st.session_state.user_id)
     _teams    = fetch_user_teams(str(st.session_state.user_id))
@@ -249,16 +226,14 @@ else:
 
     _spacer, _profile_col = st.columns([10, 1])
     with _profile_col:
-        with st.popover(f"👤 {_username}", use_container_width=False):
+        with st.popover(f"👤 {_username}"):
             st.markdown(f"## 👤 {_username}")
             st.markdown("---")
-            st.markdown("### 📊 My Stats")
             _c1, _c2, _c3 = st.columns(3)
             _c1.metric("🔍 Analyses", len(_history))
             _c2.metric("🤝 Teams", len(_teams))
             _c3.metric("👍 Useful", _fb_stats.get("useful", 0))
             st.markdown("---")
-            st.markdown("### 🧠 Recent History")
             if _history:
                 for _h in _history[:5]:
                     st.markdown(f"- 🖥 **{_h[2]}** — `{str(_h[3])[:40]}...`")
@@ -277,42 +252,31 @@ else:
     if _pending is None:
         st.sidebar.caption("Click above to check.")
     elif _pending > 0:
-        st.sidebar.error(f"🔔 {_pending} pending request{'s' if _pending > 1 else ''}!")
+        st.sidebar.error(f"🔔 {_pending} pending request(s)!")
     else:
         st.sidebar.success("🟢 No pending requests")
 
-    tabs = st.tabs([
-        "💬 Chatbot",
-        "📄 Document Analyzer",
-        "🤝 Join Team",
-        "🧠 Saved History",
-        "📊 My Trends",
-    ])
+    tabs = st.tabs(["💬 Chatbot", "📄 Document Analyzer", "🤝 Join Team", "🧠 Saved History", "📊 My Trends"])
 
     # =================================================
-    # TAB 1 — CHATBOT (formerly Analyze Error)
+    # TAB 1 — CHATBOT
     # =================================================
     with tabs[0]:
-
         st.markdown("## 💬 SAP Chatbot")
 
-        platform = st.selectbox(
-            "🖥 Select SAP Domain / Platform",
-            [
-                "SAP ABAP On-Premise",
-                "SAP BTP (Business Technology Platform)",
-                "SAP CAPM (Cloud Application Programming Model)",
-                "SAP Fiori / UI5",
-                "SAP HANA",
-                "SAP Basis",
-                "SAP Functional (MM / SD / FI / HR)",
-                "SAP Integration Suite (CPI)",
-                "SAP S/4HANA",
-                "SAP RAP (RESTful ABAP Programming)",
-                "Other / Not Sure",
-            ],
-            key="chatbot_platform"  # independent key
-        )
+        platform = st.selectbox("🖥 Select SAP Domain / Platform", [
+            "SAP ABAP On-Premise",
+            "SAP BTP (Business Technology Platform)",
+            "SAP CAPM (Cloud Application Programming Model)",
+            "SAP Fiori / UI5",
+            "SAP HANA",
+            "SAP Basis",
+            "SAP Functional (MM / SD / FI / HR)",
+            "SAP Integration Suite (CPI)",
+            "SAP S/4HANA",
+            "SAP RAP (RESTful ABAP Programming)",
+            "Other / Not Sure",
+        ], key="chatbot_platform")
 
         error_text = st.text_area(
             "📋 Paste SAP Error / Dump / Logs / Question",
@@ -321,19 +285,20 @@ else:
             key="chatbot_input"
         )
 
-        uploaded_image = st.file_uploader(
-            "📸 Upload Screenshot (optional)", type=["png", "jpg", "jpeg"], key="chatbot_img"
-        )
-
+        uploaded_image = st.file_uploader("📸 Upload Screenshot (optional)", type=["png", "jpg", "jpeg"], key="chatbot_img")
         if uploaded_image:
             if TESSERACT_AVAILABLE:
                 try:
-                    image = Image.open(uploaded_image)
-                    extracted_text = pytesseract.image_to_string(image)
+                    image = Image.open(uploaded_image).convert("L")
+                    image = ImageEnhance.Contrast(image).enhance(2.0)
+                    extracted_text = pytesseract.image_to_string(image, config='--psm 6')
                     st.success("✅ OCR Extraction Successful")
-                    st.text_area("📝 OCR Extracted Text", extracted_text, height=150)
+                    ocr_edited = st.text_area("📝 OCR Extracted Text (edit if needed)", value=extracted_text, height=150, key="ocr_edit")
+                    st.caption("💡 Tip: If OCR missed some text, manually paste it above.")
                     if not error_text:
-                        error_text = extracted_text
+                        error_text = ocr_edited
+                    else:
+                        error_text = error_text + "\n\n[From Screenshot]:\n" + ocr_edited
                 except Exception as e:
                     st.warning(f"⚠️ OCR failed: {e}")
             else:
@@ -368,7 +333,6 @@ else:
                     st.markdown("**Team Solution / Analysis:**")
                     st.success(_mans[:1500])
             st.markdown("---")
-            st.info("ℹ️ AI analysis is shown below for additional reference.")
 
         if st.session_state.get("last_analysis"):
             _p, _e, _r = st.session_state.last_analysis
@@ -406,35 +370,98 @@ else:
             if "HIGH" in response_a: severity = "HIGH"
             if "CRITICAL" in response_a: severity = "CRITICAL"
 
-            report = generate_report(platform_a, error_text_a, response_a)
-
+            # ---- DOWNLOAD SECTION ----
             st.markdown("---")
             st.markdown("### 📥 Download Report")
             download_format = st.radio("Format", ["TXT", "PDF", "WORD"], horizontal=True)
 
             if download_format == "TXT":
-                st.download_button("⬇ Download (TXT)", report, file_name="sap_gpt_report.txt")
+                txt_content = f"""SAP-GPT ANALYSIS REPORT
+{'='*60}
+PLATFORM: {platform_a}
+{'='*60}
+ERROR / QUESTION:
+{'='*60}
+{error_text_a}
+
+{'='*60}
+FULL ANALYSIS:
+{'='*60}
+{response_a}
+"""
+                st.download_button("⬇ Download (TXT)", txt_content,
+                                   file_name="sap_gpt_report.txt", mime="text/plain")
+
             elif download_format == "PDF":
-                pdf_buffer = io.BytesIO()
-                p = canvas.Canvas(pdf_buffer)
-                textobject = p.beginText(40, 800)
-                for line in report.split("\n"):
-                    textobject.textLine(line[:120])
-                p.drawText(textobject)
-                p.save()
-                pdf_buffer.seek(0)
-                st.download_button("⬇ Download (PDF)", pdf_buffer,
-                                   file_name="sap_gpt_report.pdf", mime="application/pdf")
+                try:
+                    pdf_buffer = io.BytesIO()
+                    doc_pdf = SimpleDocTemplate(
+                        pdf_buffer, pagesize=A4,
+                        rightMargin=20*mm, leftMargin=20*mm,
+                        topMargin=20*mm, bottomMargin=20*mm
+                    )
+                    styles = getSampleStyleSheet()
+                    title_style = ParagraphStyle('CTitle', parent=styles['Title'],
+                        fontSize=16, spaceAfter=12, textColor=colors.HexColor('#7c3aed'))
+                    heading_style = ParagraphStyle('CHeading', parent=styles['Heading2'],
+                        fontSize=12, spaceAfter=6, textColor=colors.HexColor('#1e293b'))
+                    body_style = ParagraphStyle('CBody', parent=styles['Normal'],
+                        fontSize=9, spaceAfter=4, leading=14)
+
+                    story = []
+                    story.append(Paragraph("SAP-GPT Analysis Report", title_style))
+                    story.append(Spacer(1, 6*mm))
+                    story.append(Paragraph(f"Platform: {platform_a}", heading_style))
+                    story.append(Spacer(1, 4*mm))
+                    story.append(Paragraph("Error / Question:", heading_style))
+                    for line in error_text_a.split("\n"):
+                        clean = line.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+                        if clean.strip():
+                            story.append(Paragraph(clean, body_style))
+                        else:
+                            story.append(Spacer(1, 2*mm))
+                    story.append(Spacer(1, 6*mm))
+                    story.append(Paragraph("Full Analysis:", heading_style))
+                    for line in response_a.split("\n"):
+                        clean = line.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+                        if clean.strip():
+                            if clean.startswith("##"):
+                                story.append(Paragraph(f"<b>{clean.replace('#','').strip()}</b>", body_style))
+                            else:
+                                story.append(Paragraph(clean, body_style))
+                        else:
+                            story.append(Spacer(1, 2*mm))
+                    doc_pdf.build(story)
+                    pdf_buffer.seek(0)
+                    st.download_button("⬇ Download (PDF)", pdf_buffer,
+                                       file_name="sap_gpt_report.pdf", mime="application/pdf")
+                except Exception as e:
+                    st.error(f"❌ PDF generation failed: {e}")
+
             elif download_format == "WORD":
-                doc = Document()
-                doc.add_heading("SAP-GPT Analysis Report", 0)
-                doc.add_paragraph(report)
-                word_buffer = io.BytesIO()
-                doc.save(word_buffer)
-                word_buffer.seek(0)
-                st.download_button("⬇ Download (Word)", word_buffer,
-                                   file_name="sap_gpt_report.docx",
-                                   mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                try:
+                    word_doc = Document()
+                    word_doc.add_heading("SAP-GPT Analysis Report", 0)
+                    word_doc.add_heading("Platform", level=2)
+                    word_doc.add_paragraph(platform_a)
+                    word_doc.add_heading("Error / Question", level=2)
+                    word_doc.add_paragraph(error_text_a)
+                    word_doc.add_heading("Full Analysis", level=2)
+                    for line in response_a.split("\n"):
+                        if line.startswith("## "):
+                            word_doc.add_heading(line.replace("## ", ""), level=3)
+                        elif line.startswith("# "):
+                            word_doc.add_heading(line.replace("# ", ""), level=2)
+                        elif line.strip():
+                            word_doc.add_paragraph(line)
+                    word_buffer = io.BytesIO()
+                    word_doc.save(word_buffer)
+                    word_buffer.seek(0)
+                    st.download_button("⬇ Download (Word)", word_buffer,
+                                       file_name="sap_gpt_report.docx",
+                                       mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                except Exception as e:
+                    st.error(f"❌ Word generation failed: {e}")
 
             st.markdown("---")
             if st.button("💾 Save For Later"):
@@ -449,11 +476,10 @@ else:
                 selected_team = st.selectbox("📁 Select Team", team_dropdown)
                 if st.button("🚀 Push To Team"):
                     code = selected_team.split("(")[-1].replace(")", "").strip()
-                    save_team_defect(code, selected_team, error_text_a, response_a,
-                                     str(st.session_state.user_id))
+                    save_team_defect(code, selected_team, error_text_a, response_a, str(st.session_state.user_id))
                     st.success("✅ Added to team!")
             else:
-                st.info("ℹ️ No teams yet. Create one in the Join Team tab.")
+                st.info("ℹ️ No teams yet. Create one in Join Team tab.")
 
             st.markdown("---")
             st.markdown("### 💡 Was this helpful?")
@@ -478,33 +504,23 @@ else:
                 st.success("✅ Feedback submitted.")
 
     # =================================================
-    # TAB 2 — DOCUMENT ANALYZER (fully independent)
+    # TAB 2 — DOCUMENT ANALYZER
     # =================================================
     with tabs[1]:
-
         st.markdown("## 📄 SAP Document Analyzer")
         st.caption("Upload any SAP document — TSD, FSD, Defect, or any SAP-related file.")
 
-        uploaded_doc = st.file_uploader(
-            "📂 Upload Document (PDF, Word, TXT)",
-            type=["pdf", "docx", "txt"],
-            key="doc_uploader"
-        )
+        uploaded_doc = st.file_uploader("📂 Upload Document (PDF, Word, TXT)", type=["pdf", "docx", "txt"], key="doc_uploader")
 
-        # 4 document types — independent from Tab 1
-        doc_type = st.selectbox(
-            "📋 Document Type",
-            [
-                "TSD (Technical Specification)",
-                "FSD (Functional Specification)",
-                "Defect Report",
-                "Other SAP Related Document",
-            ],
-            key="doc_type_select"
-        )
+        doc_type = st.selectbox("📋 Document Type", [
+            "TSD (Technical Specification)",
+            "FSD (Functional Specification)",
+            "Defect Report",
+            "Other SAP Related Document",
+        ], key="doc_type_select")
 
         if doc_type == "Other SAP Related Document":
-            st.info("ℹ️ **Other** — Upload any SAP document: ABAP, RAP, BTP, Fiori, HANA, CPI, Functional, Basis, etc. Non-SAP documents will be rejected.")
+            st.info("ℹ️ Upload any SAP doc: ABAP, RAP, BTP, Fiori, HANA, CPI, Functional, Basis, etc. Non-SAP documents will be rejected.")
 
         if st.button("⚡ Analyze Document"):
             if not uploaded_doc:
@@ -575,7 +591,7 @@ else:
                     if is_owner:
                         st.info(f"🔑 Share code: **`{t_code}`**")
                     else:
-                        st.success(f"✅ Member of this team (Code: `{t_code}`)")
+                        st.success(f"✅ Member (Code: `{t_code}`)")
 
                     st.markdown("### 👥 Members")
                     members = fetch_team_members(t_code)
