@@ -156,7 +156,7 @@ Question / Error:
 {error}
 
 Provide a thorough answer with:
-1. Root Cause / Understanding
+1. Root Cause / Understanding(if Applicable)
 2. SAP Technical Explanation
 3. Step-by-Step Fix / Solution
 4. Relevant SAP Transactions / T-codes (if applicable)
@@ -164,7 +164,7 @@ Provide a thorough answer with:
 6. Best Practices
 7. Severity: LOW / MEDIUM / HIGH / CRITICAL
 8. Prevention Tips
-9. Additional Notes
+9. Additional Notes(if Applicable)
 """)
 
 # =====================================================
